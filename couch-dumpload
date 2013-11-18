@@ -1,0 +1,44 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use 5.010;
+use File::Temp;
+use File::Slurp;
+use JSON::XS;
+use Pod::Usage;
+
+if (@ARGV) {
+    my %opts = @ARGV;
+    if ($opts{source} and $opts{target}) {
+        my $fh = File::Temp->new;
+        $fh->unlink_on_destroy(0);
+        my $fname = $fh->filename;
+        say $fname;
+        my $payload = decode_json `curl -k '$opts{source}/_all_docs?include_docs=true'`;
+        say 'size:'. @{$payload->{rows}};
+        `curl -XDELETE '$opts{target}'`;
+        `curl -XPUT '$opts{target}'`;
+        write_file($fname, encode_json({docs => $payload->{rows}}));
+        `curl -k -XPOST -d \@$fname '$opts{target}/_bulk_docs' -H 'Content-Type: application/json'`;
+        exit;
+    } else {
+        pod2usage();
+    }
+}
+
+my @a = <>;
+my $payload = decode_json("@a");
+say encode_json { docs => $payload->{rows} };
+
+__END__
+
+=head1 NAME
+
+  couch-dumpload
+
+=head1 USAGE
+
+    curl http://source:5984/db/_all_docs?include_docs=true | couch-dumpload > db.dump
+    curl -XDELETE http://target:5984/db
+    curl -XPUT http://target:5984/db
+    curl -XPOST -d @db.dump -H 'Content-Type: application/json' http://target:5984/db/_bulk_docs

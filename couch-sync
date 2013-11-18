@@ -1,0 +1,123 @@
+#!/usr/bin/env perl
+package CouchSync;
+use 5.010;
+use Moo;
+use Carp;
+use File::Slurp;
+use Mojo::JSON 'j';
+use Mojo::UserAgent;
+use Pod::Usage;
+use Try::Tiny;
+use YAML::XS;
+
+has ua => (
+    is      => 'rw',
+    default => sub { Mojo::UserAgent->new },
+);
+
+has source => (
+    is      => 'rw',
+    default => 'http://localhost:5984/products',
+);
+
+has target => (
+    is      => 'rw',
+    default => 'http://localhost:5984/testdb',
+);
+
+has since => (
+    is => 'lazy',
+);
+
+sub _build_since {
+    my ($self) = @_;
+    my ($entry) =
+      grep { $_->{source} eq $self->source and $_->{target} eq $self->target } @{$self->_sdb};
+    return $entry ? $entry->{since} : 0;
+}
+
+has sincedb => (
+    is      => 'rw',
+    default => '/tmp/couchsync.yml',
+);
+
+has _sdb => (is => 'lazy',);
+
+sub _build__sdb {
+    my ($self) = @_;
+    my $file_contents = try { read_file($self->sincedb) } or return [];
+
+    return Load($file_contents);
+}
+
+sub _update_sdb {
+    my ($self, $last_seq) = @_;
+    croak 'No last_seq given' unless $last_seq;
+    my ($entry) =
+      grep { $_->{source} eq $self->source and $_->{target} eq $self->target } @{$self->_sdb};
+    unless ($entry) {
+        $entry = {
+            source => $self->source,
+            target => $self->target
+        };
+        push @{$self->_sdb}, $entry;
+    }
+    $entry->{since} = $last_seq;
+    write_file($self->sincedb, Dump($self->_sdb));
+    return;
+}
+
+sub run {
+    my ($self) = @_;
+    say $self->source . ' -> ' . $self->target . ' (seq ' . $self->since . ')';
+    my $changes = $self->_changes;
+    say 'No changes to sync.' unless @{$changes->{results}};
+    foreach (@{$changes->{results}}) {
+        my $docid = $_->{id};
+        my ($revision, $hash) = split '-', $_->{changes}->[-1]->{rev};
+        say "$docid: $revision ($hash)";
+        my $doc = $self->_get($docid);
+        $self->_copy($doc);
+    }
+    $self->_update_sdb($changes->{last_seq});
+}
+
+sub _get {
+    my ($self, $docid) = @_;
+    $self->ua->get($self->source . '/' . $docid)->res->json;
+}
+
+sub _copy {
+    my ($self, $doc) = @_;
+    my $insert_doc = {
+        new_edits => \0,
+        docs      => [$doc],
+    };
+    $self->ua->post($self->target . '/_bulk_docs' => json => $insert_doc)->res->body;
+}
+
+sub _changes {
+    my ($self) = @_;
+    return $self->ua->get($self->source . '/_changes?since=' . $self->since)->res->json;
+}
+
+unless (caller) {
+    my %args = @ARGV;
+    pod2usage() unless $args{source} and $args{target};
+    __PACKAGE__->new(@ARGV)->run;
+    say 'Ran in ' . (time - $^T) . ' seconds';
+}
+
+__END__
+
+=head1 NAME
+
+  couch-sync
+
+=head1 USAGE
+
+    couch-sync source http://couchmaster:5984/db target http://copy:5984/db
+
+The target database must already exist. If it doesn't, create it with
+
+    curl -XPUT http://copy:5984/db
