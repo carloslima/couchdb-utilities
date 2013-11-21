@@ -38,7 +38,7 @@ sub _build_since {
 
 has sincedb => (
     is      => 'rw',
-    default => sub { '/tmp/couchsync.yml' },
+    default => sub { $ENV{HOME} . '/.couchsync.yml' },
 );
 
 has _sdb => (is => 'lazy',);
