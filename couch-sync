@@ -17,12 +17,12 @@ has ua => (
 
 has source => (
     is      => 'rw',
-    default => 'http://localhost:5984/products',
+    default => sub { 'http://localhost:5984/products' },
 );
 
 has target => (
     is      => 'rw',
-    default => 'http://localhost:5984/testdb',
+    default => sub { 'http://localhost:5984/testdb' },
 );
 
 has since => (
@@ -38,7 +38,7 @@ sub _build_since {
 
 has sincedb => (
     is      => 'rw',
-    default => '/tmp/couchsync.yml',
+    default => sub { '/tmp/couchsync.yml' },
 );
 
 has _sdb => (is => 'lazy',);
